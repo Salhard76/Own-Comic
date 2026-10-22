@@ -1,0 +1,20 @@
+name: Aggiorna catalogo
+on:
+  schedule:
+    - cron: '30 4 * * *'
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  catalogo:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Leggi i siti degli editori
+        run: python3 scripts/catalogo.py
+      - name: Salva il catalogo
+        run: |
+          git config user.name "catalogo-bot"
+          git config user.email "bot@users.noreply.github.com"
+          git add data/catalogo.json
+          git diff --cached --quiet || (git commit -m "Aggiorna catalogo" && git push)

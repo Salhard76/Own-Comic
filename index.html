@@ -73,6 +73,14 @@ input[type=checkbox]{min-height:0;width:22px;height:22px}
 .gt{font-weight:700;font-size:.85rem;line-height:1.2;margin-top:8px;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
 .gc .badge{font-size:.75rem;margin-top:4px}
 dialog{width:100%;max-width:520px;max-height:92dvh;margin:auto auto 0;border-radius:16px 16px 0 0;border-bottom-width:0;padding:16px 16px calc(16px + env(safe-area-inset-bottom))}
+/* Ragnatela e suggerimenti */
+header,main{position:relative;z-index:1}
+.web{position:fixed;bottom:0;width:min(78vw,380px);aspect-ratio:1;pointer-events:none;z-index:0;filter:drop-shadow(0 0 3px #ff7a00) drop-shadow(2px 3px 1px rgba(255,122,0,.8))}
+.web.r{right:0}.web.l{left:0;transform:scaleX(-1)}
+.sug{margin-top:6px;border:2px solid var(--line);border-radius:8px;background:var(--card);max-height:270px;overflow:auto}
+.sug button{display:flex;gap:10px;width:100%;text-align:left;background:none;border:0;border-bottom:1px solid var(--mut);padding:8px;cursor:pointer;align-items:center;min-height:64px}
+.sug img,.sug .ph{width:36px;height:52px;object-fit:cover;border-radius:3px;border:1px solid var(--line);flex:none;background:var(--pop)}
+.sug b{display:block;line-height:1.2}.sug small{color:var(--mut)}
 </style>
 </head>
 <body>
@@ -89,7 +97,7 @@ dialog{width:100%;max-width:520px;max-height:92dvh;margin:auto auto 0;border-rad
 <button class="btn fab" id="bAdd">+ Aggiungi</button>
 <dialog id="dForm"><form method="dialog" id="f">
 <h2 id="fT" style="margin:0">Nuovo fumetto</h2>
-<label>Titolo<input id="fTitle" required></label>
+<label>Titolo<input id="fTitle" required autocomplete="off" placeholder="Scrivi: tex, dylan dog, topolino..."></label><div class="sug" id="sug" hidden></div>
 <div class="row"><label>Numero / volume<input id="fNum" placeholder="es. 12"></label>
 <label>Tipo<select id="fType"><option value="serie">Serie</option><option value="oneshot">One-shot</option></select></label></div>
 <div class="row"><label>Data di uscita<input id="fDate" type="date" required></label>
@@ -110,6 +118,7 @@ dialog{width:100%;max-width:520px;max-height:92dvh;margin:auto auto 0;border-rad
 <div class="set"><input type="checkbox" id="sNotif"><label for="sNotif" style="margin:0">Notifiche attive</label></div>
 <label>Avvisami prima (giorni)<input id="sDays" type="number" min="1" max="30"></label>
 <p class="meta">Le notifiche arrivano quando apri l'app. Per avvisi anche ad app chiusa, esporta il calendario: il telefono ti avvisa da solo.</p>
+<p class="meta" id="catInfo"></p>
 <h3 style="margin:16px 0 0">Sincronizzazione GitHub</h3>
 <label>Repository (utente/nome)<input id="gRepo" placeholder="tuonome/fumetti"></label>
 <label>Token (permesso Contents, solo questo repo)<input id="gTok" type="password" autocomplete="off"></label>
@@ -176,7 +185,7 @@ function openForm(it){
  editId=it?it.id:null;$('#fT').textContent=it?'Modifica fumetto':'Nuovo fumetto';
  const m={fTitle:'title',fNum:'num',fType:'type',fDate:'date',fPrice:'price',fPub:'pub',fWhere:'where',fNotes:'notes',fIsbn:'isbn',fCover:'cover'};
  for(const k in m)$('#'+k).value=it?(it[m[k]]??''):(k==='fType'?'serie':k==='fWhere'?'Edicola':'');
- $('#fRep').checked=false;$('#fDel').hidden=!it;$('#fRep').parentElement.hidden=!!it;$('#dForm').showModal();
+ $('#fRep').checked=false;$('#fDel').hidden=!it;$('#sug').hidden=true;$('#fRep').parentElement.hidden=!!it;$('#dForm').showModal();
 }
 $('#bAdd').onclick=()=>openForm();
 $('#fDel').onclick=()=>{const it=items.find(x=>x.id===editId);if(it&&confirm('Eliminare "'+it.title+'"?')){items=items.filter(x=>x!==it);save();$('#dForm').close();render()}};
@@ -198,7 +207,7 @@ $('#f').onsubmit=e=>{
 };
 
 // Impostazioni
-$('#bSet').onclick=()=>{const g=set.gh||{};$('#gRepo').value=g.repo||'';$('#gTok').value=g.tok||'';$('#gAuto').checked=!!g.auto;$('#sNotif').checked=set.notif;$('#sDays').value=set.days;$('#dSet').showModal()};
+$('#bSet').onclick=()=>{const g=set.gh||{};$('#catInfo').textContent=catalog.length?'Catalogo editori: '+catalog.length+' titoli, aggiornato il '+(catUpd||'?'):'Catalogo editori vuoto: i suggerimenti arrivano da Google Books.';$('#gRepo').value=g.repo||'';$('#gTok').value=g.tok||'';$('#gAuto').checked=!!g.auto;$('#sNotif').checked=set.notif;$('#sDays').value=set.days;$('#dSet').showModal()};
 $('#sClose').onclick=()=>{readGh();set.days=Math.min(30,Math.max(1,+$('#sDays').value||3));wr(KS,set);$('#dSet').close();render();check()};
 $('#sNotif').onchange=async e=>{
  if(e.target.checked){
@@ -245,6 +254,34 @@ function check(){
  wr(KN,sent);
 }
 document.addEventListener('visibilitychange',()=>{if(!document.hidden){render();check()}});
+// Ragnatela
+(function(){const cx=400,cy=400,R=390,N=9,K=7,a0=Math.PI,a1=1.5*Math.PI,pt=(q,a)=>[cx+q*Math.cos(a),cy+q*Math.sin(a)],f=v=>v.toFixed(1);let d='';
+ for(let i=0;i<N;i++){const p=pt(R,a0+(a1-a0)*i/(N-1));d+='M'+cx+' '+cy+'L'+f(p[0])+' '+f(p[1])}
+ for(let k=1;k<=K;k++){const q=R*k/K;for(let i=0;i<N-1;i++){const A=a0+(a1-a0)*i/(N-1),B=a0+(a1-a0)*(i+1)/(N-1),p=pt(q,A),e=pt(q,B),c=pt(q*.84,(A+B)/2);d+='M'+f(p[0])+' '+f(p[1])+'Q'+f(c[0])+' '+f(c[1])+' '+f(e[0])+' '+f(e[1])}}
+ document.body.insertAdjacentHTML('afterbegin',['r','l'].map(c=>`<svg class="web ${c}" viewBox="0 0 400 400" aria-hidden="true"><path d="${d}" fill="none" stroke="#000" stroke-width="1.6" stroke-linecap="round"/></svg>`).join(''))})();
+
+// Ricerca suggerita: catalogo editori (Bonelli, Panini, Topolino) + Google Books
+let catalog=[],catUpd='',sugList=[],sugT,sugSeq=0;
+const nz=t=>String(t||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'');
+fetch('data/catalogo.json',{cache:'no-cache'}).then(x=>x.ok?x.json():null).then(j=>{if(j&&Array.isArray(j.items)){catalog=j.items;catUpd=j.updated||''}autoCovers()}).catch(()=>{});
+const splitT=t=>{const m=t.match(/(?:\bn\.?|\bnumero|\bvol\.?|\bvolume|#)\s*(\d+)\b/i)||t.match(/\s(\d{1,4})\s*$/);return m?{t:t.slice(0,m.index).replace(/[\s\-–:]+$/,'')||t,n:m[1],s:t.slice(m.index+m[0].length).replace(/^[\s\-–:]+/,'')}:{t,n:'',s:''}};
+function catSearch(q){const w=nz(q).split(/\s+/).filter(Boolean);if(!w.length)return[];const now=Date.now();
+ return catalog.map(c=>{const h=nz(c.title+' '+(c.num||'')+' '+(c.sub||'')+' '+(c.pub||''));if(!w.every(x=>h.includes(x)))return null;
+  let sc=nz(c.title).startsWith(w[0])?3:0;const dd=c.date?Math.abs((new Date(c.date+'T00:00:00')-now)/864e5):400;sc+=2-Math.min(dd,400)/200;return{c,sc}}).filter(Boolean).sort((a,b)=>b.sc-a.sc).slice(0,6).map(x=>x.c)}
+async function gbList(q){try{const r=await fetch('https://www.googleapis.com/books/v1/volumes?maxResults=6&printType=books&langRestrict=it&q='+encodeURIComponent(q));if(!r.ok)return[];
+ return((await r.json()).items||[]).map(x=>{const v=x.volumeInfo||{},l=v.imageLinks||{},sp=splitT(v.title||''),id=(v.industryIdentifiers||[]).find(z=>z.type==='ISBN_13');
+  return{title:sp.t,num:sp.n,sub:v.subtitle||sp.s,date:/^\d{4}-\d{2}-\d{2}$/.test(v.publishedDate||'')?v.publishedDate:'',price:(x.saleInfo&&x.saleInfo.listPrice&&x.saleInfo.listPrice.amount)||'',pub:v.publisher||'',cover:(l.thumbnail||l.smallThumbnail||'').replace('http://','https://').replace('&edge=curl',''),isbn:id?id.identifier:'',src:'Google Books',where:'Libreria'}})}catch{return[]}}
+function showSug(l,loading){sugList=l;const e=$('#sug');
+ e.innerHTML=l.map((c,i)=>`<button type="button" data-s="${i}">${c.cover?`<img src="${esc(c.cover)}" alt="" onerror="this.outerHTML='<span class=ph></span>'">`:'<span class="ph"></span>'}<span><b>${esc(c.title)}${c.num?' n. '+esc(c.num):''}</b><small>${[c.sub,c.pub,c.date?fmt(c.date):'',c.price?Number(c.price).toFixed(2)+' €':'',c.src].filter(Boolean).map(esc).join(', ')}</small></span></button>`).join('')+(loading?'<div class="meta" style="padding:8px">Cerco online...</div>':'');
+ e.hidden=!(l.length||loading)}
+$('#fTitle').addEventListener('input',()=>{clearTimeout(sugT);const q=$('#fTitle').value.trim();if(q.length<2){$('#sug').hidden=true;return}
+ const seq=++sugSeq,l=catSearch(q),on=navigator.onLine&&l.length<5;showSug(l,on);
+ if(on)sugT=setTimeout(async()=>{const g=await gbList(q);if(seq!==sugSeq)return;const seen=new Set(l.map(k=>nz(k.title)+(k.num||'')));showSug(l.concat(g.filter(k=>!seen.has(nz(k.title)+(k.num||'')))).slice(0,8),false)},300)});
+$('#sug').addEventListener('click',e=>{const b=e.target.closest('[data-s]');if(!b)return;const c=sugList[+b.dataset.s];if(!c)return;
+ $('#fTitle').value=c.title;$('#fNum').value=c.num||'';$('#fType').value=c.num?'serie':'oneshot';if(c.date)$('#fDate').value=c.date;if(c.price)$('#fPrice').value=Number(c.price).toFixed(2);
+ if(c.pub)$('#fPub').value=c.pub;if(c.where)$('#fWhere').value=c.where;$('#fIsbn').value=c.isbn||'';$('#fCover').value=c.cover||'';if(c.sub&&!$('#fNotes').value)$('#fNotes').value=c.sub;
+ $('#sug').hidden=true;toast(c.date?'Dati compilati':'Dati compilati: controlla la data')});
+
 // Copertine e codici a barre
 const pub=()=>({days:set.days,notif:set.notif});
 const gb=async q=>{try{const r=await fetch('https://www.googleapis.com/books/v1/volumes?maxResults=1&langRestrict=it&q='+encodeURIComponent(q));if(!r.ok)return;const v=(await r.json()).items?.[0]?.volumeInfo;if(!v)return null;
@@ -267,6 +304,7 @@ $('#bScan').onclick=async()=>{
 let acBusy=false;
 async function autoCovers(){if(acBusy||!navigator.onLine)return;acBusy=true;let n=0,ch=false;
  for(const i of items){if(i.cover||i.nocov||n>=8)continue;n++;
+  const cm=catalog.find(c=>c.cover&&nz(c.title)===nz(i.title)&&String(c.num||'')===String(i.num||''));if(cm){i.cover=cm.cover;ch=true;continue}
   const x=await gb(i.isbn?'isbn:'+i.isbn:'intitle:'+i.title+(i.num?' '+i.num:''));
   if(x&&x.cover){i.cover=x.cover;ch=true}else if(x===null||(x&&!x.cover)){i.nocov=1;ch=true}}
  acBusy=false;if(ch){save();render()}}
