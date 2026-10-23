@@ -143,6 +143,7 @@ let items=rd(KI,[]),set=Object.assign({notif:false,days:3},rd(KS,{})),sent=rd(KN
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const uid=()=>Date.now().toString(36)+Math.random().toString(36).slice(2,6);
 const days=d=>Math.round((new Date(d+'T00:00:00')-new Date(new Date().toDateString()))/864e5);
+const addMonths=(ds,n)=>{const d=new Date(ds+'T00:00:00'),day=d.getDate();d.setDate(1);d.setMonth(d.getMonth()+n);d.setDate(Math.min(day,new Date(d.getFullYear(),d.getMonth()+1,0).getDate()));return d.toLocaleDateString('sv-SE')};
 const fmt=d=>new Date(d+'T00:00:00').toLocaleDateString('it-IT',{day:'numeric',month:'short',year:'numeric'});
 function toast(t){const e=$('#toast');e.textContent=t;e.style.display='block';clearTimeout(toast.t);toast.t=setTimeout(()=>e.style.display='none',2500)}
 let svT;const save=skip=>{wr(KI,items);if(skip!==true&&set.gh&&set.gh.auto&&gh()){clearTimeout(svT);svT=setTimeout(()=>push(true),2500)}};
@@ -201,8 +202,7 @@ $('#f').onsubmit=e=>{
  else{
   items.push({id:uid(),bought:false,...o});
   if($('#fRep').checked&&o.num&&!isNaN(+o.num)){
-   for(let n=1;n<=5;n++){const d=new Date(o.date+'T00:00:00');d.setMonth(d.getMonth()+n);
-    items.push({id:uid(),bought:false,...o,isbn:'',num:String(+o.num+n),date:d.toLocaleDateString('sv-SE')})}
+   for(let n=1;n<=5;n++){items.push({id:uid(),bought:false,...o,isbn:'',num:String(+o.num+n),date:addMonths(o.date,n)})}
   }
  }
  save();wr(KN,sent);$('#dForm').close();render();check();autoCovers();
@@ -229,7 +229,7 @@ $('#file').onchange=async e=>{
 };
 $('#bIcs').onclick=()=>{
  const p=n=>String(n).padStart(2,'0'),ds=s=>s.replace(/-/g,'');
- const ev=items.filter(i=>!i.bought).map(i=>{
+ const ev=items.filter(i=>!i.bought&&i.date&&!isNaN(new Date(i.date+'T00:00:00'))).map(i=>{
   const e=new Date(i.date+'T00:00:00');e.setDate(e.getDate()+1);const end=e.toLocaleDateString('sv-SE').replace(/-/g,'');
   return ['BEGIN:VEVENT','UID:'+i.id+'@fumetti','DTSTAMP:'+new Date().toISOString().replace(/[-:]|\.\d+/g,''),'DTSTART;VALUE=DATE:'+ds(i.date),'DTEND;VALUE=DATE:'+end,
   'SUMMARY:'+(i.title+(i.num?' n. '+i.num:'')+' in uscita').replace(/[,;\\]/g,' '),'DESCRIPTION:'+[i.pub,i.where].filter(Boolean).join(' - ').replace(/[,;\\]/g,' '),
@@ -265,7 +265,7 @@ document.addEventListener('visibilitychange',()=>{if(!document.hidden){render();
 // Ricerca suggerita: catalogo editori (Bonelli, Panini, Topolino) + Google Books
 let catalog=[],catUpd='',watch=[],newList=[],sugList=[],sugT,sugSeq=0;
 const nz=t=>String(t||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'');
-fetch('data/catalogo.json',{cache:'no-cache'}).then(x=>x.ok?x.json():null).then(j=>{if(j&&Array.isArray(j.items)){catalog=j.items;catUpd=j.updated||'';watch=j.watch||[];render()}autoCovers()}).catch(()=>{});
+fetch('data/catalogo.json',{cache:'no-cache'}).then(x=>x.ok?x.json():null).then(j=>{if(j&&Array.isArray(j.items)){catalog=j.items;catUpd=j.updated||'';watch=j.watch||[];render()}}).catch(()=>{}).finally(()=>autoCovers());
 const splitT=t=>{const m=t.match(/(?:\bn\.?|\bnumero|\bvol\.?|\bvolume|#)\s*(\d+)\b/i)||t.match(/\s(\d{1,4})\s*$/);return m?{t:t.slice(0,m.index).replace(/[\s\-–:]+$/,'')||t,n:m[1],s:t.slice(m.index+m[0].length).replace(/^[\s\-–:]+/,'')}:{t,n:'',s:''}};
 function catSearch(q){const w=nz(q).split(/\s+/).filter(Boolean);if(!w.length)return[];const now=Date.now();
  return catalog.map(c=>{const h=nz(c.title+' '+(c.num||'')+' '+(c.sub||'')+' '+(c.pub||''));if(!w.every(x=>h.includes(x)))return null;
@@ -315,7 +315,7 @@ $('#bFind').onclick=async()=>{const isbn=$('#fIsbn').value.trim(),t=$('#fTitle')
  const x=await gb(isbn?'isbn:'+isbn:'intitle:'+t+' '+$('#fNum').value);
  if(x&&x.cover){$('#fCover').value=x.cover;toast('Copertina trovata')}else toast('Non trovata: incolla un link o scatta una foto')};
 $('#bPhoto').onclick=()=>$('#fPhoto').click();
-$('#fPhoto').onchange=e=>{const f=e.target.files[0];if(!f)return;const im=new Image();im.onload=()=>{const h=Math.min(260,im.height),w=Math.round(im.width*h/im.height),c=document.createElement('canvas');c.width=w;c.height=h;c.getContext('2d').drawImage(im,0,0,w,h);$('#fCover').value=c.toDataURL('image/jpeg',.7);URL.revokeObjectURL(im.src)};im.src=URL.createObjectURL(f);e.target.value=''};
+$('#fPhoto').onchange=e=>{const f=e.target.files[0];if(!f)return;const im=new Image();im.onload=()=>{const h=Math.min(160,im.height),w=Math.round(im.width*h/im.height),c=document.createElement('canvas');c.width=w;c.height=h;c.getContext('2d').drawImage(im,0,0,w,h);$('#fCover').value=c.toDataURL('image/jpeg',.6);URL.revokeObjectURL(im.src)};im.src=URL.createObjectURL(f);e.target.value=''};
 let stream;
 function stopScan(){if(stream)stream.getTracks().forEach(t=>t.stop());stream=null;if($('#dScan').open)$('#dScan').close()}
 $('#scClose').onclick=stopScan;
@@ -355,18 +355,19 @@ const GP='data/fumetti.json',gh=()=>set.gh&&set.gh.repo&&set.gh.tok?set.gh:null;
 const b64=t=>btoa(unescape(encodeURIComponent(t))),unb=t=>decodeURIComponent(escape(atob(t.replace(/\n/g,''))));
 const gReq=(g,o)=>fetch('https://api.github.com/repos/'+g.repo+'/contents/'+GP,Object.assign({headers:{Authorization:'Bearer '+g.tok,Accept:'application/vnd.github+json'}},o||{}));
 function readGh(){set.gh={repo:$('#gRepo').value.trim(),tok:$('#gTok').value.trim(),auto:$('#gAuto').checked};wr(KS,set)}
+function syncJson(){let s=JSON.stringify({items,set:pub()});if(s.length>900000){s=JSON.stringify({items:items.map(i=>i.cover&&i.cover.startsWith('data:')?Object.assign({},i,{cover:''}):i),set:pub()});toast('Foto copertine non sincronizzate: lista troppo grande')}return s}
 async function push(quiet){const g=gh();if(!g){quiet||toast('Inserisci repository e token');return}
  try{let sha;const r=await gReq(g);if(r.ok)sha=(await r.json()).sha;else if(r.status!==404)throw 0;
-  const w=await gReq(g,{method:'PUT',body:JSON.stringify({message:'Aggiorna fumetti',content:b64(JSON.stringify({items,set:pub()},null,1)),sha})});
+  const w=await gReq(g,{method:'PUT',body:JSON.stringify({message:'Aggiorna fumetti',content:b64(syncJson()),sha})});
   if(!w.ok)throw 0;quiet||toast('Salvato su GitHub')}catch{toast('Sincronizzazione non riuscita: controlla repository e token')}}
 async function pull(){const g=gh();if(!g){toast('Inserisci repository e token');return}
  try{const r=await gReq(g);if(!r.ok)throw 0;const d=JSON.parse(unb((await r.json()).content));if(!Array.isArray(d.items))throw 0;
-  if(!confirm('Sostituire la lista attuale con quella su GitHub?'))return;items=d.items;save(true);render();toast('Ripristinato da GitHub')}catch{toast('Nessun dato trovato su GitHub')}}
+  if(!confirm('Sostituire la lista attuale con quella su GitHub?'))return;items=d.items;if(d.set){set=Object.assign(set,d.set);wr(KS,set)}save(true);render();check();autoCovers();toast('Ripristinato da GitHub')}catch{toast('Nessun dato trovato su GitHub')}}
 $('#gPush').onclick=()=>{readGh();push()};
 $('#gPull').onclick=()=>{readGh();pull()};
 
 if('serviceWorker'in navigator)navigator.serviceWorker.register('sw.js').catch(()=>{});
-render();check();autoCovers();
+render();check();
 </script>
 </body>
 </html>
