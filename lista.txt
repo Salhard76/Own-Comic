@@ -1,0 +1,9 @@
+# La tua lista di ricerca. Una riga per titolo:
+#   Titolo | fonte | numero di partenza (facoltativo)
+# fonte: bonelli oppure panini (se la lasci vuota cerca in entrambi)
+# Scrivi il titolo come lo cercheresti sul sito. Togli il # per attivare una riga.
+#
+# Dylan Dog | bonelli
+# Tex | bonelli | 790
+# Amazing Spider-Man | panini
+# Topolino | panini

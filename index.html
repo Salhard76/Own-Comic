@@ -119,6 +119,7 @@ header,main{position:relative;z-index:1}
 <label>Avvisami prima (giorni)<input id="sDays" type="number" min="1" max="30"></label>
 <p class="meta">Le notifiche arrivano quando apri l'app. Per avvisi anche ad app chiusa, esporta il calendario: il telefono ti avvisa da solo.</p>
 <label>Chiave API Google Books (facoltativa, evita i limiti di ricerca)<input id="gKey" autocomplete="off"></label>
+<div class="set"><input type="checkbox" id="sAlt"><label for="sAlt" style="margin:0">Ricerca estesa su Google Books e Open Library (altri editori)</label></div>
 <p class="meta" id="catInfo"></p>
 <h3 style="margin:16px 0 0">Sincronizzazione GitHub</h3>
 <label>Repository (utente/nome)<input id="gRepo" placeholder="tuonome/fumetti"></label>
@@ -146,10 +147,10 @@ const fmt=d=>new Date(d+'T00:00:00').toLocaleDateString('it-IT',{day:'numeric',m
 function toast(t){const e=$('#toast');e.textContent=t;e.style.display='block';clearTimeout(toast.t);toast.t=setTimeout(()=>e.style.display='none',2500)}
 let svT;const save=skip=>{wr(KI,items);if(skip!==true&&set.gh&&set.gh.auto&&gh()){clearTimeout(svT);svT=setTimeout(()=>push(true),2500)}};
 
-const TABS=[['next','Prossime'],['buy','Da comprare'],['done','Acquistati'],['all','Tutti'],['series','Serie'],['stats','Statistiche']];
+const TABS=[['next','Prossime'],['new','Novità'],['buy','Da comprare'],['done','Acquistati'],['all','Tutti'],['series','Serie'],['stats','Statistiche']];
 function render(){
  $('#tabs').innerHTML=TABS.map(([k,l])=>`<button class="tab" role="tab" aria-selected="${k===tab}" data-t="${k}">${l}</button>`).join('');
- const q=$('#q').value.toLowerCase();$('#bView').textContent=set.view==='grid'?'Lista':'Griglia';if(tab==='series'){$('#list').innerHTML=seriesView(q);return}if(tab==='stats'){$('#list').innerHTML=statsView();return}
+ const q=$('#q').value.toLowerCase();$('#bView').textContent=set.view==='grid'?'Lista':'Griglia';if(tab==='new'){$('#list').innerHTML=newView(q);return}if(tab==='series'){$('#list').innerHTML=seriesView(q);return}if(tab==='stats'){$('#list').innerHTML=statsView();return}
  let v=items.filter(i=>(i.title+' '+(i.pub||'')).toLowerCase().includes(q));
  if(tab==='next')v=v.filter(i=>!i.bought&&days(i.date)>0);
  if(tab==='buy')v=v.filter(i=>!i.bought&&days(i.date)<=0);
@@ -208,8 +209,8 @@ $('#f').onsubmit=e=>{
 };
 
 // Impostazioni
-$('#bSet').onclick=()=>{const g=set.gh||{};$('#gKey').value=set.gkey||'';$('#catInfo').textContent=catalog.length?'Catalogo editori: '+catalog.length+' titoli, aggiornato il '+(catUpd||'?'):'Catalogo editori vuoto: i suggerimenti arrivano da Google Books.';$('#gRepo').value=g.repo||'';$('#gTok').value=g.tok||'';$('#gAuto').checked=!!g.auto;$('#sNotif').checked=set.notif;$('#sDays').value=set.days;$('#dSet').showModal()};
-$('#sClose').onclick=()=>{readGh();set.gkey=$('#gKey').value.trim();set.days=Math.min(30,Math.max(1,+$('#sDays').value||3));wr(KS,set);$('#dSet').close();render();check()};
+$('#bSet').onclick=()=>{const g=set.gh||{};$('#gKey').value=set.gkey||'';$('#sAlt').checked=!!set.alt;$('#catInfo').textContent=catalog.length?'Catalogo: '+['Bonelli','Panini','Topolino'].map(k=>k+' '+catalog.filter(c=>c.src===k).length).join(', ')+'. Aggiornato il '+(catUpd||'?'):'Catalogo vuoto: lancia "Aggiorna catalogo" da Actions su GitHub.';$('#gRepo').value=g.repo||'';$('#gTok').value=g.tok||'';$('#gAuto').checked=!!g.auto;$('#sNotif').checked=set.notif;$('#sDays').value=set.days;$('#dSet').showModal()};
+$('#sClose').onclick=()=>{readGh();set.gkey=$('#gKey').value.trim();set.alt=$('#sAlt').checked;set.days=Math.min(30,Math.max(1,+$('#sDays').value||3));wr(KS,set);$('#dSet').close();render();check()};
 $('#sNotif').onchange=async e=>{
  if(e.target.checked){
   if(!('Notification'in window)){toast('Notifiche non supportate');e.target.checked=false;return}
@@ -262,14 +263,15 @@ document.addEventListener('visibilitychange',()=>{if(!document.hidden){render();
  document.body.insertAdjacentHTML('afterbegin',['r','l'].map(c=>`<svg class="web ${c}" viewBox="0 0 400 400" aria-hidden="true"><path d="${d}" fill="none" stroke="#000" stroke-width="1.6" stroke-linecap="round"/></svg>`).join(''))})();
 
 // Ricerca suggerita: catalogo editori (Bonelli, Panini, Topolino) + Google Books
-let catalog=[],catUpd='',sugList=[],sugT,sugSeq=0;
+let catalog=[],catUpd='',watch=[],newList=[],sugList=[],sugT,sugSeq=0;
 const nz=t=>String(t||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'');
-fetch('data/catalogo.json',{cache:'no-cache'}).then(x=>x.ok?x.json():null).then(j=>{if(j&&Array.isArray(j.items)){catalog=j.items;catUpd=j.updated||''}autoCovers()}).catch(()=>{});
+fetch('data/catalogo.json',{cache:'no-cache'}).then(x=>x.ok?x.json():null).then(j=>{if(j&&Array.isArray(j.items)){catalog=j.items;catUpd=j.updated||'';watch=j.watch||[];render()}autoCovers()}).catch(()=>{});
 const splitT=t=>{const m=t.match(/(?:\bn\.?|\bnumero|\bvol\.?|\bvolume|#)\s*(\d+)\b/i)||t.match(/\s(\d{1,4})\s*$/);return m?{t:t.slice(0,m.index).replace(/[\s\-–:]+$/,'')||t,n:m[1],s:t.slice(m.index+m[0].length).replace(/^[\s\-–:]+/,'')}:{t,n:'',s:''}};
 function catSearch(q){const w=nz(q).split(/\s+/).filter(Boolean);if(!w.length)return[];const now=Date.now();
  return catalog.map(c=>{const h=nz(c.title+' '+(c.num||'')+' '+(c.sub||'')+' '+(c.pub||''));if(!w.every(x=>h.includes(x)))return null;
   let sc=nz(c.title).startsWith(w[0])?3:0;const dd=c.date?Math.abs((new Date(c.date+'T00:00:00')-now)/864e5):400;sc+=2-Math.min(dd,400)/200;return{c,sc}}).filter(Boolean).sort((a,b)=>b.sc-a.sc).slice(0,6).map(x=>x.c)}
-const SERIES=[['Tex','Sergio Bonelli Editore','Edicola'],['Zagor','Sergio Bonelli Editore','Edicola'],['Dylan Dog','Sergio Bonelli Editore','Edicola'],['Martin Mystère','Sergio Bonelli Editore','Edicola'],['Nathan Never','Sergio Bonelli Editore','Edicola'],['Dampyr','Sergio Bonelli Editore','Edicola'],['Mister No','Sergio Bonelli Editore','Edicola'],['Julia','Sergio Bonelli Editore','Edicola'],['Dragonero','Sergio Bonelli Editore','Edicola'],['Tex Willer','Sergio Bonelli Editore','Edicola'],['Le Storie','Sergio Bonelli Editore','Edicola'],['Ken Parker','Sergio Bonelli Editore','Edicola'],['Topolino','Panini Comics','Edicola'],['L\'Uomo Ragno','Panini Comics','Fumetteria'],['Naruto','Panini Comics','Fumetteria'],['Berserk','Panini Comics','Fumetteria'],['One Piece','Star Comics','Fumetteria'],['Dragon Ball','Star Comics','Fumetteria'],['Diabolik','Astorina','Edicola']];
+const SERIES=[['Tex','Sergio Bonelli Editore','Edicola'],['Zagor','Sergio Bonelli Editore','Edicola'],['Dylan Dog','Sergio Bonelli Editore','Edicola'],['Martin Mystère','Sergio Bonelli Editore','Edicola'],['Nathan Never','Sergio Bonelli Editore','Edicola'],['Dampyr','Sergio Bonelli Editore','Edicola'],['Mister No','Sergio Bonelli Editore','Edicola'],['Julia','Sergio Bonelli Editore','Edicola'],['Dragonero','Sergio Bonelli Editore','Edicola'],['Tex Willer','Sergio Bonelli Editore','Edicola'],['Ken Parker','Sergio Bonelli Editore','Edicola'],['Topolino','Panini Comics','Edicola'],['Amazing Spider-Man','Panini Comics','Edicola'],['Gli Incredibili X-Men','Panini Comics','Edicola'],['Wolverine','Panini Comics','Edicola']];
+const rel=d=>{const n=days(d);return n>0?' (tra '+n+' gg)':n===0?' (oggi)':''};
 function suggest(q){const l=catSearch(q),w=nz(q).split(/\s+/).filter(Boolean),nm=w.filter(x=>/^\d+$/.test(x)),wd=w.filter(x=>!/^\d+$/.test(x)),seen=new Set(l.map(c=>nz(c.title)));
  if(wd.length)SERIES.forEach(x=>{const h=nz(x[0]);if(!seen.has(h)&&wd.every(y=>h.split(/\s+/).some(z=>z.startsWith(y)))){seen.add(h);l.push({title:x[0],num:nm[0]||'',type:'serie',pub:x[1],where:x[2],date:'',price:'',cover:'',isbn:'',src:'Serie nota',sub:''})}});
  return l.slice(0,8)}
@@ -283,16 +285,27 @@ async function onlineList(q){let out=[],note='';
   if(r.ok)out=out.concat(((await r.json()).docs||[]).map(d=>{const sp=splitT(d.title||'');return{title:sp.t,num:sp.n,sub:sp.s,date:'',price:'',pub:(d.publisher||[])[0]||'',cover:d.cover_i?'https://covers.openlibrary.org/b/id/'+d.cover_i+'-M.jpg':'',isbn:(d.isbn||[]).find(z=>z.length===13)||'',src:'Open Library',where:'Libreria'}}))}catch{}}
  return{items:out,note:out.length?'':(note||'Nessun risultato online')}}
 function showSug(l,st){sugList=l;const e=$('#sug');
- e.innerHTML=l.map((c,i)=>`<button type="button" data-s="${i}">${c.cover?`<img src="${esc(c.cover)}" alt="" onerror="this.outerHTML='<span class=ph></span>'">`:'<span class="ph"></span>'}<span><b>${esc(c.title)}${c.num?' n. '+esc(c.num):''}</b><small>${[c.sub,c.pub,c.date?fmt(c.date):'',c.price?Number(c.price).toFixed(2)+' €':'',c.src].filter(Boolean).map(esc).join(', ')}</small></span></button>`).join('')+(st==='loading'?'<div class="meta" style="padding:8px">Cerco online...</div>':st?`<div class="meta" style="padding:8px">${esc(st)}</div>`:'');
+ e.innerHTML=l.map((c,i)=>`<button type="button" data-s="${i}">${c.cover?`<img src="${esc(c.cover)}" alt="" onerror="this.outerHTML='<span class=ph></span>'">`:'<span class="ph"></span>'}<span><b>${esc(c.title)}${c.num?' n. '+esc(c.num):''}</b><small>${[c.sub,c.line||c.pub,c.date?fmt(c.date)+rel(c.date):'',c.price?Number(c.price).toFixed(2)+' €':'',c.src].filter(Boolean).map(esc).join(', ')}</small></span></button>`).join('')+(st==='loading'?'<div class="meta" style="padding:8px">Cerco online...</div>':st?`<div class="meta" style="padding:8px">${esc(st)}</div>`:'');
  e.hidden=!(l.length||st)}
 $('#fTitle').addEventListener('input',()=>{clearTimeout(sugT);const q=$('#fTitle').value.trim();if(q.length<2){$('#sug').hidden=true;return}
- const seq=++sugSeq,l=suggest(q),on=navigator.onLine&&l.filter(c=>c.src!=='Serie nota').length<5;showSug(l,on?'loading':(navigator.onLine?'':'Sei offline: suggerimenti solo da catalogo e serie note'));
+ const seq=++sugSeq,l=suggest(q),on=!!set.alt&&navigator.onLine&&l.filter(c=>c.src!=='Serie nota').length<5;showSug(l,on?'loading':(!catalog.length?'Catalogo vuoto: lancia l\'aggiornamento su GitHub (Actions) o attiva la ricerca estesa in Impostazioni':(l.length?'':'Nessun risultato nel catalogo Bonelli e Panini')));
  if(on)sugT=setTimeout(async()=>{const g=await onlineList(q);if(seq!==sugSeq)return;const seen=new Set(l.map(k=>nz(k.title)+(k.num||'')));
   showSug(l.concat(g.items.filter(k=>!seen.has(nz(k.title)+(k.num||'')))).slice(0,9),g.note||(l.length||g.items.length?'':'Nessun risultato: compila a mano'))},350)});
 $('#sug').addEventListener('click',e=>{const b=e.target.closest('[data-s]');if(!b)return;const c=sugList[+b.dataset.s];if(!c)return;
  $('#fTitle').value=c.title;$('#fNum').value=c.num||'';$('#fType').value=c.type||(c.num?'serie':'oneshot');if(c.date)$('#fDate').value=c.date;if(c.price)$('#fPrice').value=Number(c.price).toFixed(2);
  if(c.pub)$('#fPub').value=c.pub;if(c.where)$('#fWhere').value=c.where;$('#fIsbn').value=c.isbn||'';$('#fCover').value=c.cover||'';if(c.sub&&!$('#fNotes').value)$('#fNotes').value=c.sub;
  $('#sug').hidden=true;toast(c.date?'Dati compilati':'Dati compilati: controlla la data')});
+
+// Novita dalla tua lista
+function newView(q){
+ const W=new Set(watch.map(nz));
+ if(!W.size)return '<div class="empty">Nessuna serie nella tua lista di ricerca. Aggiungi i titoli nel file scripts/lista.txt su GitHub.</div>';
+ newList=catalog.filter(c=>W.has(nz(c.title))&&c.date&&days(c.date)>=-14&&days(c.date)<=60&&!items.some(i=>nz(i.title)===nz(c.title)&&String(i.num||'')===String(c.num||''))&&nz(c.title+' '+(c.num||'')).includes(nz(q))).sort((a,b)=>a.date.localeCompare(b.date));
+ if(!newList.length)return '<div class="empty">Nessuna novità per le tue serie: o sono già nella tua lista, o non ci sono uscite negli ultimi 14 e nei prossimi 60 giorni.</div>';
+ return newList.map((c,i)=>`<article class="card"><button class="chk" data-c="${i}" aria-label="Aggiungi alla lista">+</button><div class="cov">${c.cover?`<img src="${esc(c.cover)}" alt="" loading="lazy" onerror="this.remove()">`:esc(c.title.slice(0,1).toUpperCase())}</div><div><h3>${esc(c.title)}${c.num?' n. '+esc(c.num):''}</h3><div class="meta">${fmt(c.date)}${rel(c.date)}. ${[c.line||c.pub,c.price?Number(c.price).toFixed(2)+' €':''].filter(Boolean).map(esc).join(', ')}</div></div></article>`).join('')}
+document.addEventListener('click',e=>{const k=e.target.closest('[data-c]');if(!k)return;const c=newList[+k.dataset.c];if(!c)return;
+ items.push({id:uid(),bought:false,title:c.title,num:c.num||'',type:c.type||(c.num?'serie':'oneshot'),date:c.date,price:c.price||'',pub:c.pub||'',where:c.where||'Edicola',notes:c.sub||'',isbn:c.isbn||'',cover:c.cover||''});
+ save();render();toast('Aggiunto: '+c.title+(c.num?' n. '+c.num:''))});
 
 // Copertine e codici a barre
 const pub=()=>({days:set.days,notif:set.notif});

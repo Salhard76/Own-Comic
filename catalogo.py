@@ -1,181 +1,231 @@
-"""Costruisce data/catalogo.json leggendo i siti degli editori.
-Ogni fonte e' in SOURCES: per aggiungere un editore basta una riga.
-Strategie, in ordine: 1) API WooCommerce (se 'woo'), 2) sitemap + dati strutturati JSON-LD.
-Se una fonte fallisce le altre proseguono; i log mostrano cosa e' successo."""
-import json, re, html, gzip, time, os, datetime, urllib.request
+"""Catalogo uscite Bonelli + Panini.
+Legge le stesse liste prodotto che consulti a mano e salva data/catalogo.json.
+Per cambiare cosa viene letto basta modificare SOURCES."""
+import json, re, html, gzip, time, os, datetime, unicodedata, urllib.request
+from urllib.parse import urljoin, quote
 
-SOURCES = [
-    dict(name='Bonelli', pub='Sergio Bonelli Editore', where='Edicola',
-         woo='https://www.sergiobonelli.it',
-         sitemaps=['https://www.sergiobonelli.it/sitemap_index.xml', 'https://www.sergiobonelli.it/product-sitemap.xml', 'https://www.sergiobonelli.it/wp-sitemap.xml'],
-         include=r'/(prodotto|product)/'),
-    dict(name='Panini', pub='Panini Comics', where='Fumetteria',
-         sitemaps=['https://www.panini.it/sitemap.xml', 'https://www.panini.it/sitemap_index.xml'],
-         include=r'/shp_ita_it/.+\.html'),
-]
-MAX_NEW = 250      # pagine prodotto nuove lette per fonte a ogni giro
-OUT = 'data/catalogo.json'
 TODAY = datetime.date.today()
-UA = {'User-Agent': 'Mozilla/5.0 (compatible; FumettiApp/1.0)', 'Accept-Language': 'it-IT,it;q=0.9', 'Accept-Encoding': 'gzip'}
-MESI = {m: i + 1 for i, m in enumerate('gennaio febbraio marzo aprile maggio giugno luglio agosto settembre ottobre novembre dicembre'.split())}
-SKIP = re.compile(r'merchandising|abbigliament|gadget|prodotti ufficiali|t-shirt|felpe', re.I)
+OUT = 'data/catalogo.json'
+PAUSE = 0.8
+UA = {'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36',
+      'Accept': 'text/html,application/xhtml+xml', 'Accept-Language': 'it-IT,it;q=0.9', 'Accept-Encoding': 'gzip'}
+B = 'https://www.sergiobonelli.it'
+P = 'https://www.panini.it/shp_ita_it/fumetti/'
+PAN0 = 'https://www.panini.it/shp_ita_it/'
+# Bonelli: pagine 2+ con ?paged=N (36 prodotti per pagina, dal piu' recente). Pagine "ULTIME USCITE" dei personaggi principali.
+CHARS = ['tex', 'zagor', 'mister-no', 'martin-mystere', 'dylan-dog', 'nathan-never', 'julia', 'dampyr', 'dragonero']
+# (fonte, indirizzo, dove si compra, pagine massime, linea, tipo di paginazione)
+SOURCES = [
+    ('Bonelli', B + '/categoria-prodotto/prossimamente/', 'Edicola', 2, 'Bonelli', 'paged'),
+    ('Bonelli', B + '/categoria-prodotto/fumetti/', 'Edicola', 2, 'Bonelli', 'paged'),
+] + [('Bonelli', B + '/categoria-prodotto/fumetti/?filter_personaggio=' + c, 'Edicola', 1, 'Bonelli', 'paged') for c in CHARS]
+# Panini: ogni categoria letta due volte: con il filtro predefinito (acquistabili) e senza (include le uscite non ancora acquistabili)
+for _path, _where, _line in [
+        ('in-edicola/marvel.html', 'Edicola', 'Marvel'), ('in-edicola/disney.html', 'Edicola', 'Disney'),
+        ('in-edicola/dc.html', 'Edicola', 'DC'), ('in-edicola/panini-comics.html', 'Edicola', 'Panini Comics'),
+        ('panini-disney/tipologia/topolino-settimanale.html', 'Edicola', 'Disney'),
+        ('marvel.html', 'Fumetteria', 'Marvel'), ('dc.html', 'Fumetteria', 'DC'), ('panini-disney.html', 'Fumetteria', 'Disney')]:
+    SOURCES += [('Panini', P + _path, _where, 3, _line, 'q'), ('Panini', P + _path, _where, 2, _line, 'skip')]
+PRICE = re.compile(r'(\d{1,3}(?:\.\d{3})*,\d{2})\s*€')
 
 
-def get(u, t=25):
-    r = urllib.request.urlopen(urllib.request.Request(u, headers=UA), timeout=t)
-    b = r.read()
-    if b[:2] == b'\x1f\x8b':
-        b = gzip.decompress(b)
-    return b.decode('utf-8', 'replace')
+def fetch(u):
+    for k in range(2):
+        try:
+            r = urllib.request.urlopen(urllib.request.Request(u, headers=UA), timeout=30)
+            b = r.read()
+            if b[:2] == b'\x1f\x8b':
+                b = gzip.decompress(b)
+            return b.decode('utf-8', 'replace')
+        except Exception as e:
+            print('   errore %s: %s' % (u, e))
+            time.sleep(2)
+    return None
 
 
-def text(s):
-    return html.unescape(re.sub(r'<[^>]+>', ' ', s or ''))
+def attrs(s):
+    return {k.lower(): html.unescape(a or b) for k, a, b in re.findall(r'([\w:-]+)\s*=\s*(?:"([^"]*)"|\'([^\']*)\')', s)}
 
 
-def find_date(s):
-    s = text(s)
-    m = re.search(r'(\d{1,2})[/.](\d{1,2})[/.](20\d\d)', s)
-    try:
-        if m:
-            return datetime.date(int(m[3]), int(m[2]), int(m[1])).isoformat()
-        m = re.search(r'(\d{1,2})\s*[°º]?\s+(' + '|'.join(MESI) + r')\s*(20\d\d)?', s, re.I)
-        if m:
-            mo, d = MESI[m[2].lower()], int(m[1])
-            if m[3]:
-                return datetime.date(int(m[3]), mo, d).isoformat()
-            c = [datetime.date(TODAY.year + k, mo, d) for k in (-1, 0, 1)]
-            return min(c, key=lambda x: abs((x - TODAY).days)).isoformat()
-        m = re.search(r'(20\d\d)-(\d\d)-(\d\d)', s)
-        if m:
-            return datetime.date(int(m[1]), int(m[2]), int(m[3])).isoformat()
-    except ValueError:
-        pass
-    return ''
-
-
-def ctx_date(page):
-    t = text(page)
-    m = re.search(r'(data di uscita|uscita|in edicola dal|disponibile dal|data di pubblicazione|release date)', t, re.I)
-    return find_date(t[m.end():m.end() + 80]) if m else ''
-
-
-def split(t):
-    t = html.unescape(t or '').strip()
-    m = re.search(r'(?:\bn\.?|\bnumero|\bvol\.?|\bvolume|#)\s*(\d+)\b', t, re.I) or re.search(r'\s(\d{1,4})\s*$', t)
+def first_img(h):
+    m = re.search(r'<img\b([^>]*)>', h, re.I | re.S)
     if not m:
-        return t, '', ''
-    return (t[:m.start()].strip(' -–:') or t), m.group(1), t[m.end():].strip(' -–:')
+        return '', ''
+    a = attrs(m.group(1))
+    for k in ('data-src', 'data-lazy-src', 'data-original', 'src'):
+        v = a.get(k, '')
+        if v and not v.startswith('data:'):
+            return v, a.get('alt', '')
+    ss = a.get('srcset') or a.get('data-srcset', '')
+    return (ss.split()[0] if ss else ''), a.get('alt', '')
 
 
-def jsonld(page):
-    out = []
-    for m in re.finditer(r'<script[^>]+ld\+json[^>]*>(.*?)</script>', page, re.S | re.I):
-        try:
-            st = [json.loads(m.group(1))]
-        except ValueError:
-            continue
-        while st:
-            x = st.pop()
-            if isinstance(x, list):
-                st += x
-            elif isinstance(x, dict):
-                st += x.get('@graph', []) if isinstance(x.get('@graph'), list) else []
-                if 'Product' in json.dumps(x.get('@type', '')):
-                    out.append(x)
-    return out
+def clean(s):
+    return html.unescape(re.sub(r'\s+', ' ', re.sub(r'<[^>]+>', ' ', s or ''))).strip()
 
 
-def og(page, k):
-    m = re.search(r'<meta[^>]+property=["\']%s["\'][^>]+content=["\']([^"\']+)' % k, page, re.I)
-    return html.unescape(m.group(1)) if m else ''
+def lines(s):
+    return [l.strip() for l in html.unescape(re.sub(r'<[^>]+>', '\n', s)).split('\n') if l.strip()]
 
 
-def first(v):
-    if isinstance(v, list):
-        v = v[0] if v else ''
-    return v.get('url', '') if isinstance(v, dict) else (v or '')
-
-
-def make(src, name, url, cover, price, desc, isbn, date, tags=''):
-    if SKIP.search(tags or ''):
-        return None
-    title, num, sub = split(name)
-    if not title:
-        return None
-    label = 'Topolino' if re.search(r'topolino', name, re.I) else src['name']
+def mkdate(y, m, d):
     try:
-        price = '%.2f' % float(str(price).replace(',', '.')) if price not in ('', None) else ''
+        return datetime.date(int(y), int(m), int(d)).isoformat()
     except ValueError:
-        price = ''
-    return dict(title=title, num=num, sub=sub, date=date or find_date(desc), price=price, pub=src['pub'],
-                where=src['where'], cover=cover or '', isbn=isbn or '', url=url, src=label)
+        return ''
 
 
-def via_woo(src, known):
-    out = []
-    for pg in range(1, 6):
-        try:
-            data = json.loads(get('%s/wp-json/wc/store/v1/products?per_page=100&page=%d&orderby=date&order=desc' % (src['woo'], pg)))
-        except Exception as e:
-            print('  [woo] pagina %d: %s' % (pg, e))
-            break
-        if not data:
-            break
-        for p in data:
-            if p.get('permalink') in known:
-                continue
-            pr = p.get('prices', {})
-            price = int(pr.get('price') or 0) / 10 ** int(pr.get('currency_minor_unit', 2)) if pr.get('price') else ''
-            cats = ' '.join(c.get('name', '') for c in p.get('categories', []))
-            it = make(src, p.get('name', ''), p.get('permalink', ''), (p.get('images') or [{}])[0].get('src', ''), price,
-                      (p.get('short_description') or '') + ' ' + (p.get('description') or ''), '', '', cats)
-            if it:
-                out.append(it)
-        time.sleep(0.5)
-    return out
+def money(m):
+    return m.group(1).replace('.', '').replace(',', '.') if m else ''
 
 
-def sm_urls(u, depth=0):
-    try:
-        x = get(u)
-    except Exception as e:
-        print('  [sitemap] %s: %s' % (u, e))
-        return []
-    locs = re.findall(r'<loc>\s*([^<\s]+)\s*</loc>', x)
-    if '<sitemapindex' in x and depth < 2:
-        out = []
-        for l in locs[:15]:
-            out += sm_urls(l, depth + 1)
-        return out
-    return locs
-
-
-def via_pages(src, known):
-    urls = []
-    for sm in src['sitemaps']:
-        urls = [u for u in sm_urls(sm) if re.search(src['include'], u) and u not in known]
-        if urls:
-            break
-    print('  [sitemap] pagine nuove trovate: %d' % len(urls))
-    out = []
-    for u in urls[:MAX_NEW]:
-        try:
-            pg = get(u)
-        except Exception as e:
-            print('  [pagina] %s: %s' % (u, e))
+def segments(page, url_re, base):
+    """Un elemento per ogni link prodotto che contiene un'immagine (cioe' la scheda in elenco, non il menu)."""
+    starts, seen = [], set()
+    for m in re.finditer(r'<a\b([^>]*)>(.*?)</a>', page, re.S | re.I):
+        h = attrs(m.group(1)).get('href', '')
+        if not h:
             continue
-        ld = (jsonld(pg) or [{}])[0]
-        off = ld.get('offers') or {}
-        off = off[0] if isinstance(off, list) and off else off
-        isbn = str(ld.get('gtin13') or ld.get('isbn') or '')
-        it = make(src, ld.get('name') or og(pg, 'og:title'), u, first(ld.get('image')) or og(pg, 'og:image'),
-                  (off or {}).get('price') or (off or {}).get('lowPrice') or '', ld.get('description') or '',
-                  isbn if re.fullmatch(r'\d{13}', isbn) else '', find_date(str(ld.get('releaseDate') or '')) or ctx_date(pg))
-        if it:
-            out.append(it)
-        time.sleep(0.4)
+        h = urljoin(base, h).split('#')[0]
+        if re.search(url_re, h) and '<img' in m.group(2).lower() and h not in seen:
+            seen.add(h)
+            starts.append((m.start(), h, m.group(2)))
+    out = []
+    for i, (pos, h, inner) in enumerate(starts):
+        end = starts[i + 1][0] if i + 1 < len(starts) else pos + 4000
+        out.append((h, inner, page[pos:min(end, pos + 4000)]))
     return out
+
+
+def parse_bonelli(page, where, line):
+    out = []
+    for url, inner, chunk in segments(page, r'/prodotto/', B):
+        img, alt = first_img(inner)
+        L = lines(chunk)
+        txt = ' '.join(L)
+        m = re.search(r'Uscita:?\s*(\d{1,2})/(\d{1,2})/(\d{4})', txt)
+        date = mkdate(m[3], m[2], m[1]) if m else ''
+        idx = next((i for i, l in enumerate(L) if 'Uscita' in l), None)
+        pre = [l for l in (L[:idx] if idx is not None else []) if not l.isupper() and len(l) > 2]
+        lab = (pre[-2] + ' ' + pre[-1]) if len(pre) > 1 and pre[-2] in ('Libri', 'Albi', 'Variant', 'Esclusive') else (pre[-1] if pre else '')
+        story = alt
+        if idx is not None:
+            j = idx + 1
+            if j < len(L) and re.fullmatch(r'[\d/ ]+', L[j]):
+                j += 1
+            if j < len(L) and not PRICE.search(L[j]):
+                story = L[j]
+        nm = re.search(r'\bn\.?\s*0*(\d+)\s*$', lab)
+        num = nm.group(1) if nm else ''
+        series = re.sub(r'^(Libri|Albi)\s+', '', lab[:nm.start()] if nm else lab).strip()
+        if num and series and series.lower() != 'vari':
+            title, sub = series, (re.sub(r'^' + re.escape(series) + r'[\s.:\-–]+', '', story) or story)
+        else:
+            title, sub, num = (story or series), '', ''
+        if not title:
+            continue
+        out.append(dict(title=title, num=num, sub=sub, date=date, price=money(PRICE.search(txt)), pub='Sergio Bonelli Editore',
+                        where='Libreria' if lab.startswith('Libri') else where, cover=img, isbn='', url=url, src='Bonelli',
+                        line=line, type='serie' if num else 'oneshot'))
+    return out
+
+
+def parse_panini(page, where, line):
+    out = []
+    for url, inner, chunk in segments(page, r'-it\d\d\.html', 'https://www.panini.it/'):
+        img, alt = first_img(inner)
+        if 'placeholder' in img:
+            img = ''
+        m = re.search(r'<h\d[^>]*>\s*<a[^>]*>(.*?)</a>', chunk, re.S | re.I)
+        name = clean(m.group(1)) if m else re.sub(r'^[^_]*_', '', alt).strip()
+        if not name:
+            continue
+        txt = clean(chunk)
+        d = re.search(r'\b(\d{2})/(\d{2})/(\d{2})\b', txt)
+        date = mkdate(2000 + int(d[3]), d[2], d[1]) if d else ''
+        pm = re.search(r'Prezzo predefinito\s*(\d{1,3}(?:\.\d{3})*,\d{2})', txt) or PRICE.search(txt)
+        nm = re.search(r'\bn\.?\s*0*(\d+)\s*$', name) or re.search(r'\s0*(\d{1,4})\s*$', name)
+        title, num = (name[:nm.start()].strip(' -–:') or name, nm.group(1)) if nm else (name, '')
+        var = 'isbnv' in url.lower() or re.search(r'variant', name, re.I)
+        out.append(dict(title=title, num=num, sub='Variant' if var else '', date=date, price=money(pm), pub='Panini Comics',
+                        where=where, cover=img, isbn='', url=url, src='Topolino' if title.lower().startswith('topolino') else 'Panini',
+                        line=line, type='serie' if num else 'oneshot'))
+    return out
+
+
+def page_url(base, n, kind):
+    if kind == 'sq':
+        return base + ('' if n == 1 else '&p=%d' % n)
+    if kind == 'paged':
+        return base if n == 1 else base + ('&' if '?' in base else '?') + 'paged=%d' % n
+    if kind == 'skip':
+        return base + '?skip_default_filters=true' + ('' if n == 1 else '&p=%d' % n)
+    return base if n == 1 else base + '?p=%d&pnn_is_saleable=1' % n
+
+
+def scrape(name, base, where, maxp, line, kind, run, items, flt=None):
+    got, dates = 0, []
+    for n in range(1, maxp + 1):
+        u = page_url(base, n, kind)
+        pg = fetch(u)
+        if pg is None:
+            break
+        found = (parse_bonelli if name == 'Bonelli' else parse_panini)(pg, where, line)
+        if flt:
+            found = [i for i in found if flt(i)]
+        if not found:
+            print('  [%s] pagina %d senza prodotti (%s)' % (name, n, u))
+            if n == 1:
+                open('data/debug-%s.txt' % name.lower(), 'w', encoding='utf-8').write(
+                    '== %s\nlunghezza %d, link /prodotto/: %d, link -it08: %d\n%s\n' % (u, len(pg), pg.count('/prodotto/'), len(re.findall(r'-it\d\d\.html', pg)), pg[:1500]))
+            break
+        dates += [i['date'] for i in found if i['date']]
+        fresh = [i for i in found if i['url'] not in run]
+        for i in fresh:
+            run.add(i['url'])
+            items[i['url']] = i
+        got += len(fresh)
+        if not fresh:
+            break
+        time.sleep(PAUSE)
+    ds = sorted(dates)
+    print('[%s] %s [%s] -> %d nuove (date %s / %s)' % (name, base.replace('https://', '')[:80], kind, got, ds[0] if ds else '-', ds[-1] if ds else '-'))
+
+
+def nzs(t):
+    t = unicodedata.normalize('NFD', (t or '').lower())
+    return re.sub(r'[^a-z0-9]+', ' ', ''.join(c for c in t if unicodedata.category(c) != 'Mn')).strip()
+
+
+def read_lista():
+    """Righe 'Titolo | fonte | numero' da scripts/lista.txt, piu' i titoli della tua lista sincronizzata (se c'e')."""
+    out = []
+    try:
+        for l in open('scripts/lista.txt', encoding='utf-8').read().splitlines():
+            l = l.split('#')[0].strip()
+            if l:
+                p = [x.strip() for x in l.split('|')]
+                out.append((p[0], p[1].lower() if len(p) > 1 and p[1] else '*', int(p[2]) if len(p) > 2 and p[2].isdigit() else 0))
+    except Exception:
+        pass
+    try:
+        for i in json.load(open('data/fumetti.json', encoding='utf-8')).get('items', []):
+            t = (i.get('title') or '').strip()
+            if t and nzs(t) not in [nzs(x[0]) for x in out]:
+                out.append((t, '*', 0))
+    except Exception:
+        pass
+    return out[:40]
+
+
+def make_filter(title, start):
+    w = nzs(title).split()
+    def f(i):
+        h = nzs(i['title'] + ' ' + i['sub'])
+        if not all(x in h.split() or x in h for x in w):
+            return False
+        return not start or not i['num'] or (i['num'].isdigit() and int(i['num']) >= start)
+    return f
 
 
 def main():
@@ -185,23 +235,22 @@ def main():
     except Exception:
         old = []
     items = {i['url']: i for i in old if i.get('url')}
-    for src in SOURCES:
-        new = []
-        try:
-            if src.get('woo'):
-                new = via_woo(src, items)
-            if not new:
-                new = via_pages(src, items)
-        except Exception as e:
-            print('[%s] errore: %s' % (src['name'], e))
-        for i in new:
-            items[i['url']] = i
-        print('[%s] nuove voci: %d (con data: %d, con copertina: %d)' % (src['name'], len(new), sum(1 for i in new if i['date']), sum(1 for i in new if i['cover'])))
-    lim = (TODAY - datetime.timedelta(days=730)).isoformat()
+    run = set()
+    for name, base, where, maxp, line, kind in SOURCES:
+        scrape(name, base, where, maxp, line, kind, run, items)
+    entries = read_lista()
+    print('Lista di ricerca: %d titoli' % len(entries))
+    for t, src, st in entries:
+        f = make_filter(t, st)
+        if src in ('*', 'panini', 'marvel', 'dc', 'disney', 'topolino'):
+            scrape('Panini', PAN0 + 'catalogsearch/result/?q=' + quote(t) + '&product_list_order=release_date&product_list_dir=desc', 'Edicola', 2, 'Lista', 'sq', run, items, f)
+        if src in ('*', 'bonelli'):
+            scrape('Bonelli', B + '/categoria-prodotto/fumetti/?filter_personaggio=' + nzs(t).replace(' ', '-'), 'Edicola', 2, 'Lista', 'paged', run, items, f)
+    lim = (TODAY - datetime.timedelta(days=400)).isoformat()
     keep = [i for i in items.values() if not i['date'] or i['date'] >= lim]
     keep.sort(key=lambda i: i['date'] or '0', reverse=True)
-    json.dump(dict(updated=TODAY.isoformat(), items=keep[:6000]), open(OUT, 'w', encoding='utf-8'), ensure_ascii=False, separators=(',', ':'))
-    print('Catalogo: %d voci' % len(keep))
+    json.dump(dict(updated=TODAY.isoformat(), watch=[e[0] for e in entries], items=keep[:6000]), open(OUT, 'w', encoding='utf-8'), ensure_ascii=False, separators=(',', ':'))
+    print('Catalogo: %d voci (Bonelli %d, Panini %d, Topolino %d)' % tuple([len(keep)] + [sum(1 for i in keep if i['src'] == k) for k in ('Bonelli', 'Panini', 'Topolino')]))
 
 
 if __name__ == '__main__':
